@@ -1,0 +1,16 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "L2Cap",
+        "repositoryURL": "https://github.com/paulw11/L2Cap",
+        "state": {
+          "branch": "master",
+          "revision": "de3457759e23dfacd5708a6fa6e5c8fc298c57ff",
+          "version": null
+        }
+      }
+    ]
+  },
+  "version": 1
+}
