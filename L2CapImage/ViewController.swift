@@ -28,6 +28,8 @@ class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavig
     
     private var outputData = Data()
     
+    var imageParts: String = ""
+    
     override func viewDidLoad() {
         
         
@@ -44,6 +46,7 @@ class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavig
                 self.getConnection = connection
                 self.getConnection?.receiveCallback = { (connection,data) in
                     print("Received data")
+                    self.processReceived(data: data)
                 }
             }
         }
@@ -51,11 +54,11 @@ class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavig
         self.peripheral = L2CapPeripheral(connectionHandler: { (connection) in
             self.connection = connection
             self.connection?.receiveCallback = { (connection, data) in
-                DispatchQueue.main.async {
-                    if let image = self.convertBase64ToImage(String(data: data, encoding: .utf8) ?? ""){
-                        self.imageView.image = image
-                    }
-                }
+//                DispatchQueue.main.async {
+//                    if let image = self.convertBase64ToImage(String(data: data, encoding: .utf8) ?? ""){
+//                        self.imageView.image = image
+//                    }
+//                }
             }
         })
         
@@ -95,19 +98,10 @@ class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavig
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
         guard let profileImage = info[UIImagePickerController.InfoKey.editedImage] as? UIImage else {return}
         imageView.image = profileImage
-        guard let connection = self.getConnection else {
-            return
+        if self.getConnection != nil{
+            startSending(image: profileImage)
+            print ("Started sending")
         }
-        
-        if let image = self.imageView.image, let data = image.jpegData(compressionQuality: 0.1){
-//            let base64Str = data.base64EncodedString()
-            let base64Str = convertImageToBase64(image)
-            let base64Data = base64Str.data(using: .utf8)!
-            connection.send(data: base64Data)
-        }
-        
-        
-        
         dismiss(animated: true, completion: nil)
     }
     
@@ -123,7 +117,76 @@ class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavig
         
     }
     
-    func convertImageToBase64(_ image: UIImage) -> String {
+    func processReceived(data: Data) {
+        print("processReceived with size = \(data.count)")
+        if let string = String.init(data: data, encoding: .utf8) {
+            self.imageParts.append(string)
+            print(string)
+            if imageParts.contains("FUNCINGEND") {
+                print("END")
+                let withoutFuncking = imageParts.replacingOccurrences(of: "FUNCINGEND", with: "")
+                let withOpenBracket = "[" + withoutFuncking
+                let withCommas = withOpenBracket.replacingOccurrences(of: "}{", with: "},{")
+                let closeBracket = withCommas + "]"
+                print(closeBracket)
+                if let items = try? JSONSerialization.jsonObject(with: closeBracket.data(using: .utf8)!, options: .allowFragments) as? [[String: Any]] {
+                    let sorted = items.sorted { ($0["packetNumber"] as! Int) < ($1["packetNumber"] as! Int) }
+                    let reduced = sorted.map { $0["data"] as! String }.reduce("") { $0 + $1 }
+                    let data =  Data(base64Encoded: items.first!["data"] as! String, options: .ignoreUnknownCharacters)!
+                    self.imageView.image = UIImage(data: data)
+                    }
+                }
+            
+        }
+    }
+    
+    func startSending(image: UIImage) {
+        guard let base64ImageString = convertImageToBase64(image) else { return }
+        
+        for packet in createPackets(of: base64ImageString) {
+            connection?.send(data: packet)
+        }
+    }
+    
+    func createChunk(with utf8: String.UTF8View, uuid: String, isLastPart: Bool, packetNumber: Int) -> Data? {
+        
+        let json = ["id": uuid, "isLastPart": isLastPart, "packetNumber": packetNumber, "data": String(utf8) ] as [String : Any]
+        guard var data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) else { return nil }
+        
+        if isLastPart {
+            let fuck = "FUNCINGEND".data(using: .utf8)
+            data.append(fuck!)
+        }
+        
+        return data
+    }
+    
+    func createPackets(of string: String) -> [Data] {
+        
+        var offset = 0
+        let stringLenght = string.utf8.count
+        let imageChunkSize = 875
+        let id = UUID().uuidString
+        
+        var currentChunkNumber = 0
+        
+        var chunks: [Data] = []
+        
+        let utf8String = string.utf8
+        offset += utf8String.count
+        let isLastPart = true
+        
+        guard let chunk = createChunk(with: utf8String, uuid: id, isLastPart: isLastPart, packetNumber: currentChunkNumber) else {
+            return []
+            print("cant create chunk")
+        }
+        currentChunkNumber += 1
+        chunks.append(chunk)
+        
+        return chunks
+    }
+    
+    func convertImageToBase64(_ image: UIImage) -> String? {
            let imageData = image.jpegData(compressionQuality: 0.4)!
            let strBase64 = imageData.base64EncodedString(options: .lineLength64Characters)
            return strBase64
